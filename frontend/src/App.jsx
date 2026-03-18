@@ -1,14 +1,27 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, Download, AlertCircle, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { Upload, FileText, Download, AlertCircle, CheckCircle2, Loader2, GraduationCap, Plus, Trash2, LayoutList } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function App() {
+    const [mode, setMode] = useState('upload'); // 'upload' or 'manual'
+    
+    // Upload Mode State
     const [file, setFile] = useState(null);
+    const fileInputRef = useRef(null);
+
+    // Manual Mode State
+    const [globalLevel, setGlobalLevel] = useState('Intermediate');
+    const [globalSubject, setGlobalSubject] = useState('FM');
+    const [questions, setQuestions] = useState([
+        { chapter_number: '', unit: '', question_number: '', marks: ''}
+    ]);
+
+    // Shared State
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [success, setSuccess] = useState(false);
-    const fileInputRef = useRef(null);
 
+    // --- Upload Mode Handlers ---
     const handleDragOver = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -34,24 +47,81 @@ function App() {
         }
     };
 
+    // --- Manual Mode Handlers ---
+    const updateQuestion = (index, field, value) => {
+        const newQs = [...questions];
+        newQs[index][field] = value;
+        setQuestions(newQs);
+        setError(null);
+    };
+
+    const addQuestion = () => {
+        const lastQ = questions[questions.length - 1];
+        setQuestions([...questions, { 
+            chapter_number: lastQ ? lastQ.chapter_number : '', 
+            unit: lastQ ? lastQ.unit : '', 
+            question_number: '', 
+            marks: lastQ ? lastQ.marks : '' 
+        }]);
+    };
+
+    const removeQuestion = (index) => {
+        if (questions.length === 1) return;
+        setQuestions(questions.filter((_, i) => i !== index));
+    };
+
+    // --- Submit Handler ---
     const generatePaper = async () => {
-        if (!file) return;
+        if (mode === 'upload' && !file) return;
+        if (mode === 'manual' && questions.length === 0) return;
 
         setLoading(true);
         setError(null);
         setSuccess(false);
 
-        const formData = new FormData();
-        formData.append('file', file);
-
         try {
-            const response = await fetch('/api/generate-paper', {
-                method: 'POST',
-                body: formData,
-            });
+            let response;
+            
+            const API_URL = import.meta.env.VITE_API_URL || '';
+
+            if (mode === 'upload') {
+                const formData = new FormData();
+                formData.append('file', file);
+                response = await fetch(`${API_URL}/api/generate-paper`, {
+                    method: 'POST',
+                    body: formData,
+                });
+            } else {
+                // Manual Mode Validation
+                if (!globalLevel || !globalSubject) {
+                    throw new Error("Please provide the Exam Level and Subject.");
+                }
+
+                for (let i = 0; i < questions.length; i++) {
+                    const q = questions[i];
+                    if (!q.chapter_number || !q.question_number) {
+                        throw new Error(`Row ${i + 1} is missing a Chapter or Question Number.`);
+                    }
+                }
+                
+                const payload = questions.map(q => ({
+                    level: globalLevel,
+                    subject: globalSubject,
+                    chapter_number: String(q.chapter_number),
+                    unit: String(q.unit || ""),
+                    question_number: String(q.question_number),
+                    marks: String(q.marks || "")
+                }));
+                
+                response = await fetch(`${API_URL}/api/generate-paper-json`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ questions: payload }),
+                });
+            }
 
             if (!response.ok) {
-                const errorData = await response.json();
+                const errorData = await response.json().catch(() => ({}));
                 throw new Error(errorData.detail || 'Failed to generate paper');
             }
 
@@ -67,7 +137,7 @@ function App() {
             a.remove();
 
             setSuccess(true);
-            setFile(null);
+            if (mode === 'upload') setFile(null);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -84,49 +154,143 @@ function App() {
                 <div className="blob blob-3" />
             </div>
 
-            <div className="container">
+            <div className="container" style={{ maxWidth: mode === 'manual' ? '900px' : '600px', transition: 'max-width 0.4s ease' }}>
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.6 }}
                 >
                     <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
-                        <Sparkles className="text-primary" size={48} color="#8b5cf6" />
+                        <GraduationCap className="text-primary" size={48} color="#3b82f6" />
                     </div>
-                    <h1>Symphony</h1>
-                    <p className="subtitle">Upload your plotting sheet to generate a question paper in seconds.</p>
+                    <h1 style={{fontSize: '2.5rem'}}>FOCAS Exam Generator</h1>
+                    <p className="subtitle">Your Last Attempt — High-quality, precise question papers in seconds.</p>
                 </motion.div>
 
-                <motion.div
-                    className="glass upload-zone"
-                    whileHover={{ scale: 1.01 }}
-                    whileTap={{ scale: 0.99 }}
-                    onClick={() => fileInputRef.current.click()}
-                    onDragOver={handleDragOver}
-                    onDrop={handleDrop}
-                    animate={{ borderColor: file ? '#8b5cf6' : 'rgba(255, 255, 255, 0.1)' }}
-                >
-                    <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleFileSelect}
-                        style={{ display: 'none' }}
-                        accept=".xlsx, .xls"
-                    />
+                {/* --- Tab Selector --- */}
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '30px' }}>
+                    <button 
+                        className={`tab-btn ${mode === 'upload' ? 'active' : ''}`}
+                        onClick={() => { setMode('upload'); setError(null); setSuccess(false); }}
+                        style={{ background: mode === 'upload' ? 'rgba(59, 130, 246, 0.2)' : 'transparent', border: '1px solid #3b82f6', padding: '10px 20px', borderRadius: '12px', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                    >
+                        <Upload size={18} /> Upload Excel
+                    </button>
+                    <button 
+                        className={`tab-btn ${mode === 'manual' ? 'active' : ''}`}
+                        onClick={() => { setMode('manual'); setError(null); setSuccess(false); }}
+                        style={{ background: mode === 'manual' ? 'rgba(59, 130, 246, 0.2)' : 'transparent', border: '1px solid #3b82f6', padding: '10px 20px', borderRadius: '12px', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                    >
+                        <LayoutList size={18} /> Manual Builder
+                    </button>
+                </div>
 
-                    <div className="upload-icon-container" style={{ display: 'flex', justifyContent: 'center' }}>
-                        {file ? (
-                            <FileText size={64} className="upload-icon" />
-                        ) : (
-                            <Upload size={64} className="upload-icon" />
-                        )}
-                    </div>
+                {/* --- Upload Mode UI --- */}
+                {mode === 'upload' && (
+                    <motion.div
+                        className="glass upload-zone"
+                        whileHover={{ scale: 1.01 }}
+                        whileTap={{ scale: 0.99 }}
+                        onClick={() => fileInputRef.current.click()}
+                        onDragOver={handleDragOver}
+                        onDrop={handleDrop}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1, borderColor: file ? '#3b82f6' : 'rgba(255, 255, 255, 0.1)' }}
+                    >
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileSelect}
+                            style={{ display: 'none' }}
+                            accept=".xlsx, .xls"
+                        />
 
-                    <p className="upload-text">
-                        {file ? file.name : 'Click or drag & drop plotting sheet'}
-                    </p>
-                    <p className="upload-hint">Excel files only (must contain level, subject, chapter, and question number)</p>
-                </motion.div>
+                        <div className="upload-icon-container" style={{ display: 'flex', justifyContent: 'center' }}>
+                            {file ? (
+                                <FileText size={64} className="upload-icon" />
+                            ) : (
+                                <Upload size={64} className="upload-icon" />
+                            )}
+                        </div>
+
+                        <p className="upload-text">
+                            {file ? file.name : 'Click or drag & drop plotting sheet'}
+                        </p>
+                        <p className="upload-hint">Excel files only (must contain level, subject, chapter, and question number)</p>
+                    </motion.div>
+                )}
+
+                {/* --- Manual Mode UI --- */}
+                {mode === 'manual' && (
+                    <motion.div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                        
+                        {/* Global Config Card */}
+                        <div className="glass" style={{ padding: '24px', display: 'flex', gap: '30px', alignItems: 'center' }}>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', textAlign: 'left' }}>
+                                <label style={{ fontSize: '0.9rem', color: '#93c5fd', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Exam Level</label>
+                                <select className="builder-input" value={globalLevel} onChange={(e) => setGlobalLevel(e.target.value)} style={{ padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.2s', width: '100%'}}>
+                                    <option value="Foundation">Foundation</option>
+                                    <option value="Intermediate">Intermediate</option>
+                                    <option value="Final">Final</option>
+                                </select>
+                            </div>
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', textAlign: 'left' }}>
+                                <label style={{ fontSize: '0.9rem', color: '#93c5fd', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Subject</label>
+                                <input className="builder-input" type="text" placeholder="e.g. FM" value={globalSubject} onChange={(e) => setGlobalSubject(e.target.value)} style={{ padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.2s', width: '100%'}} />
+                            </div>
+                        </div>
+
+                        {/* Questions List Card */}
+                        <div className="glass" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#fff' }}>Questions</h3>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', padding: '0 10px' }}>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Chapter</div>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Unit (Optional)</div>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Q Num</div>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Marks</div>
+                                <div></div>
+                            </div>
+
+                            <AnimatePresence>
+                                {questions.map((q, idx) => (
+                                    <motion.div 
+                                        key={idx} 
+                                        initial={{ opacity: 0, height: 0 }} 
+                                        animate={{ opacity: 1, height: 'auto' }} 
+                                        exit={{ opacity: 0, height: 0 }}
+                                        style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}
+                                    >
+                                        <input className="builder-input" type="text" placeholder="e.g. 9" value={q.chapter_number} onChange={(e) => updateQuestion(idx, 'chapter_number', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid transparent', transition: 'all 0.2s', width: '100%'}} />
+                                        <input className="builder-input" type="text" placeholder="blank if no unit" value={q.unit} onChange={(e) => updateQuestion(idx, 'unit', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid transparent', transition: 'all 0.2s', width: '100%'}} />
+                                        <input className="builder-input" type="text" placeholder="Q1" value={q.question_number} onChange={(e) => updateQuestion(idx, 'question_number', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(59, 130, 246, 0.1)', color: 'white', border: '1px solid rgba(59, 130, 246, 0.3)', transition: 'all 0.2s', width: '100%'}} />
+                                        <input className="builder-input" type="text" placeholder="5" value={q.marks} onChange={(e) => updateQuestion(idx, 'marks', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(59, 130, 246, 0.1)', color: 'white', border: '1px solid rgba(59, 130, 246, 0.3)', transition: 'all 0.2s', width: '100%'}} />
+                                        
+                                        <button 
+                                            onClick={() => removeQuestion(idx)} 
+                                            disabled={questions.length === 1} 
+                                            style={{ background: 'transparent', border: 'none', color: questions.length === 1 ? 'rgba(255,255,255,0.1)' : '#ef4444', cursor: questions.length === 1 ? 'not-allowed' : 'pointer', display: 'flex', justifyContent: 'center' }}
+                                        >
+                                            <Trash2 size={20} />
+                                        </button>
+                                    </motion.div>
+                                ))}
+                            </AnimatePresence>
+
+                            <button 
+                                onClick={addQuestion} 
+                                style={{ marginTop: '10px', background: 'rgba(59, 130, 246, 0.15)', border: '1px dashed rgba(59, 130, 246, 0.5)', color: '#93c5fd', padding: '16px', borderRadius: '12px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', fontWeight: 500, transition: 'all 0.2s' }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.25)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.15)'; }}
+                            >
+                                <Plus size={20} /> Add Another Question
+                            </button>
+                        </div>
+                    </motion.div>
+                )}
 
                 <AnimatePresence>
                     {error && (
@@ -135,6 +299,7 @@ function App() {
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
                             className="status status-error"
+                            style={{marginTop: '20px'}}
                         >
                             <AlertCircle size={20} />
                             <span>{error}</span>
@@ -147,6 +312,7 @@ function App() {
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
                             className="status status-success"
+                            style={{marginTop: '20px'}}
                         >
                             <CheckCircle2 size={20} />
                             <span>Paper generated and downloaded successfully!</span>
@@ -156,7 +322,8 @@ function App() {
 
                 <motion.button
                     className="btn"
-                    disabled={!file || loading}
+                    style={{ marginTop: '20px' }}
+                    disabled={(mode === 'upload' && !file) || loading}
                     onClick={(e) => {
                         e.stopPropagation();
                         generatePaper();
@@ -172,6 +339,16 @@ function App() {
                     {loading ? 'Processing...' : 'Generate Word Document'}
                 </motion.button>
             </div>
+
+            <style>{`
+                .builder-input:focus {
+                    outline: 2px solid #3b82f6;
+                }
+                option {
+                    background: #1e1e2f;
+                    color: white;
+                }
+            `}</style>
         </>
     );
 }

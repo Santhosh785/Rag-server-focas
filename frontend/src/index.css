@@ -1,6 +1,6 @@
 :root {
-    --primary: #8b5cf6;
-    --primary-hover: #7c3aed;
+    --primary: #3b82f6; /* FOCAS Blue */
+    --primary-hover: #2563eb;
     --bg: #0f172a;
     --card-bg: rgba(30, 41, 59, 0.7);
     --text: #f8fafc;
@@ -63,13 +63,13 @@ body {
 .blob-1 {
     top: -100px;
     left: -100px;
-    background: #6366f1;
+    background: #2563eb;
 }
 
 .blob-2 {
     bottom: -100px;
     right: -100px;
-    background: #a855f7;
+    background: #3b82f6;
     animation-delay: -5s;
 }
 
@@ -77,7 +77,7 @@ body {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    background: #ec4899;
+    background: #60a5fa;
     animation-delay: -10s;
 }
 
@@ -111,10 +111,7 @@ h1 {
     font-size: 3rem;
     font-weight: 700;
     margin-bottom: 16px;
-    background: linear-gradient(to right, #818cf8, #c084fc);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
+    color: white;
 }
 
 p.subtitle {
@@ -135,13 +132,13 @@ p.subtitle {
 
 .upload-zone:hover {
     border-color: var(--primary);
-    background: rgba(139, 92, 246, 0.05);
+    background: rgba(59, 130, 246, 0.05);
     transform: translateY(-4px);
 }
 
 .upload-zone.active {
     border-color: var(--primary);
-    background: rgba(139, 92, 246, 0.1);
+    background: rgba(59, 130, 246, 0.1);
 }
 
 .upload-icon {
@@ -164,7 +161,7 @@ p.subtitle {
 
 /* Button */
 .btn {
-    background: linear-gradient(135deg, var(--primary), #a855f7);
+    background: linear-gradient(135deg, var(--primary), #2563eb);
     color: white;
     border: none;
     padding: 16px 32px;
@@ -176,12 +173,12 @@ p.subtitle {
     display: inline-flex;
     align-items: center;
     gap: 12px;
-    box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3);
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
 }
 
 .btn:hover:not(:disabled) {
     transform: scale(1.02);
-    box-shadow: 0 6px 24px rgba(139, 92, 246, 0.4);
+    box-shadow: 0 6px 24px rgba(59, 130, 246, 0.4);
 }
 
 .btn:active:not(:disabled) {
