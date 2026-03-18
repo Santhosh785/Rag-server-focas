@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.shared import Pt, Inches, RGBColor
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
@@ -63,13 +63,12 @@ def build_paper_from_df(df: pd.DataFrame) -> io.BytesIO:
     # 2. Initialize Word Doc
     doc = Document()
     
-    # Margins
-    sections = doc.sections
-    for section in sections:
-        section.top_margin = Inches(0.4)
-        section.bottom_margin = Inches(0.4)
-        section.left_margin = Inches(0.6)
-        section.right_margin = Inches(0.6)
+    # Margins (Standardized for professional look)
+    for section in doc.sections:
+        section.top_margin = Inches(0.5)
+        section.bottom_margin = Inches(0.5)
+        section.left_margin = Inches(0.65)
+        section.right_margin = Inches(0.65)
 
     # Pull Metadata
     first_row = df.dropna(subset=['level', 'subject']).iloc[0] if not df.empty else None
@@ -188,27 +187,81 @@ def build_paper_from_df(df: pd.DataFrame) -> io.BytesIO:
             questions_found += 1
             q_text = question_data.get("question_text", "")
             
-            # Clean prefix: "Question X" or "QUESTION NO X"
-            q_text_clean = re.sub(r'^(?:QUESTION|Question)\s+(?:NO\s+)?\d+.*?\n', '', q_text, flags=re.IGNORECASE | re.DOTALL).strip()
+            # 1. Clean "Question X" or "QUESTION NO. X" from very beginning
+            q_text_clean = re.sub(r'^\s*(?:QUESTION|Question)\s+(?:NO\.?\s+)?\d+[^\n]*\n', '', q_text, flags=re.IGNORECASE).strip()
             
-            # Q-Header (Label Only)
-            p_q = doc.add_paragraph()
-            run_q_label = p_q.add_run(f"Q{q_num}. ")
+            # 2. Extract metadata like (MTP Oct 18...) or [MTP ...]
+            source_meta = ""
+            meta_match = re.match(r'^([\[\(].*?(?:MTP|RTP).*?[\]\)])\s*\n*', q_text_clean, flags=re.IGNORECASE)
+            if meta_match:
+                source_meta = meta_match.group(1).strip()
+                q_text_clean = q_text_clean[meta_match.end():].strip()
+            
+            # 3. Handle First Line to keep it on the same line as Q-Header
+            lines = q_text_clean.split('\n')
+            first_text_line = ""
+            remaining_lines = []
+            has_first = False
+            
+            for line in lines:
+                s = line.strip()
+                if not has_first:
+                    if not s: continue
+                    if s.startswith('+') or s.startswith('|'):
+                        remaining_lines.append(line)
+                        has_first = True
+                    else:
+                        first_text_line = s + " "
+                        has_first = True
+                else:
+                    remaining_lines.append(line)
+
+            # 4. Q-Header Layout using an invisible table for Right-Aligned Marks
+            head_table = doc.add_table(rows=1, cols=2)
+            head_table.autofit = False
+            head_table.columns[0].width = Inches(5.8)
+            head_table.columns[1].width = Inches(1.2)
+            
+            c_left = head_table.rows[0].cells[0]
+            p_head = c_left.paragraphs[0]
+            if questions_found > 1:
+                p_head.paragraph_format.space_before = Pt(16)
+            else:
+                p_head.paragraph_format.space_before = Pt(4)
+
+            # Sequential Label
+            run_q_label = p_head.add_run(f"Q{questions_found}. ")
             run_q_label.bold = True
             run_q_label.font.size = Pt(11)
 
-            # Process content (Body + Tables)
-            add_formatted_content(doc, q_text_clean)
-            
-            # Marks at the bottom right
+            # Source (Dark Blue)
+            if source_meta:
+                 sm_run = p_head.add_run(f"{source_meta} ")
+                 sm_run.font.color.rgb = RGBColor(0, 0, 139) 
+                 sm_run.font.size = Pt(10)
+
+            # First Line Inline
+            if first_text_line:
+                body_run = p_head.add_run("  " + first_text_line.strip())
+                body_run.font.size = Pt(10)
+
+            # Right Aligned Marks
+            c_right = head_table.rows[0].cells[1]
+            p_marks = c_right.paragraphs[0]
+            p_marks.alignment = WD_ALIGN_PARAGRAPH.RIGHT
             if marks:
-                p_marks = doc.add_paragraph()
-                p_marks.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                m_run = p_marks.add_run(f"[{marks} Marks]")
-                m_run.bold = True
-                m_run.font.color.rgb = RGBColor(192, 0, 0)
-                m_run.font.size = Pt(10)
-                p_marks.paragraph_format.space_after = Pt(6)
+                 m_val = str(marks).strip()
+                 if '[' not in m_val and 'Mark' not in m_val: m_val = f"[{m_val} Marks]"
+                 mk_run = p_marks.add_run(m_val)
+                 mk_run.bold = True
+                 mk_run.font.color.rgb = RGBColor(192, 0, 0)
+                 mk_run.font.size = Pt(11)
+
+            p_head.paragraph_format.space_after = Pt(2)
+
+            if remaining_lines:
+                remaining_text = "\n".join(remaining_lines)
+                add_formatted_content(doc, remaining_text)
             
         else:
             logger.warning(f"❌ Not found in DB: Q{q_num} (L={level}, S={subject}, Ch={chapter})")
@@ -383,10 +436,10 @@ def add_formatted_content(doc, text):
             if table_lines:
                 create_word_table(doc, table_lines)
                 table_lines = []
-            if stripped or line == "":
-                p = doc.add_paragraph(line)
+            if stripped:  # REMOVED `or line == ""` TO COMPACT THE SPACING!
+                p = doc.add_paragraph(stripped)
                 p.style.font.size = Pt(10)
-                p.paragraph_format.space_after = Pt(0)
+                p.paragraph_format.space_after = Pt(4)
                 p.paragraph_format.line_spacing = 1.0
 
     if table_lines:
@@ -396,28 +449,77 @@ def create_word_table(doc, table_lines):
     """Parses ASCII pipes into a proportional Word table."""
     data_rows = []
     for line in table_lines:
-        if line.strip().startswith('|'):
-            cells = [c.strip() for c in line.split('|') if c.strip() or '|' in line]
-            if line.strip().startswith('|'): cells = cells[1:]
-            if line.strip().endswith('|'): cells = cells[:-1]
-            data_rows.append(cells)
+        line_s = line.strip()
+        if not line_s.startswith('|'):
+            continue
+        cells = [c.strip() for c in line_s.split('|')]
+        # Remove first empty before first pipe
+        if len(cells) > 0 and cells[0] == "": cells = cells[1:]
+        # Remove last empty after last pipe
+        if len(cells) > 0 and cells[-1] == "": cells = cells[:-1]
+        
+        # Don't add markdown dividers consisting of just dashes e.g. |---|---|
+        if all(re.match(r'^[-:\s]*$', c) for c in cells):
+            continue
+
+        data_rows.append(cells)
     
     if not data_rows: return
-    data_rows = [r for r in data_rows if any(r)]
+    # Remove rows that are entirely empty
+    data_rows = [r for r in data_rows if any(c != "" for c in r)]
     if not data_rows: return
 
+    # Remove completely empty columns
     num_cols = max(len(row) for row in data_rows)
+    for r in data_rows:
+        while len(r) < num_cols:
+            r.append("")
+
+    cols_to_keep = []
+    for j in range(num_cols):
+        if any(row[j] != "" for row in data_rows):
+            cols_to_keep.append(j)
+
+    if not cols_to_keep:
+        return
+
+    filtered_data = []
+    for row in data_rows:
+        filtered_data.append([row[j] for j in cols_to_keep])
+
+    data_rows = filtered_data
+    num_cols = len(cols_to_keep)
+
     table = doc.add_table(rows=len(data_rows), cols=num_cols)
     table.style = 'Table Grid'
     table.autofit = True
+    table.allow_autofit = True
     
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
     for i, row in enumerate(data_rows):
+        # Prevent row from breaking across pages
+        tr = table.rows[i]._tr
+        trPr = tr.get_or_add_trPr()
+        cantSplit = OxmlElement('w:cantSplit')
+        cantSplit.set(qn('w:val'), 'true')
+        trPr.append(cantSplit)
+        
         for j, val in enumerate(row):
-            if j < num_cols:
-                table.cell(i, j).text = val
-                for p in table.cell(i, j).paragraphs:
-                    p.style.font.size = Pt(9)
-                    p.paragraph_format.space_after = Pt(0)
+            cell = table.cell(i, j)
+            cell.text = val
+            for p in cell.paragraphs:
+                p.style.font.size = Pt(9)
+                p.paragraph_format.space_after = Pt(2)
+                p.paragraph_format.space_before = Pt(2)
+
+    # Add a small buffer paragraph after table
+    try:
+        p_buf = doc.add_paragraph()
+        p_buf.paragraph_format.space_after = Pt(4)
+    except:
+        pass
 
 if __name__ == "__main__":
     import uvicorn
