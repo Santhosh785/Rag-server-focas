@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Upload, FileText, Download, AlertCircle, CheckCircle2, Loader2, GraduationCap, Plus, Trash2, LayoutList } from 'lucide-react';
+import { Upload, FileText, Download, AlertCircle, CheckCircle2, Loader2, GraduationCap, Plus, Trash2, LayoutList, Dices } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function App() {
@@ -15,6 +15,12 @@ function App() {
     const [questions, setQuestions] = useState([
         { chapter_number: '', unit: '', question_number: '', marks: ''}
     ]);
+
+    // Random Mode State
+    const [randomLevel, setRandomLevel] = useState('Intermediate');
+    const [randomSubject, setRandomSubject] = useState('FM');
+    const [randomChapter, setRandomChapter] = useState('');
+    const [randomMarks, setRandomMarks] = useState(50);
 
     // Shared State
     const [loading, setLoading] = useState(false);
@@ -91,7 +97,7 @@ function App() {
                     method: 'POST',
                     body: formData,
                 });
-            } else {
+            } else if (mode === 'manual') {
                 // Manual Mode Validation
                 if (!globalLevel || !globalSubject) {
                     throw new Error("Please provide the Exam Level and Subject.");
@@ -117,6 +123,21 @@ function App() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ questions: payload }),
+                });
+            } else if (mode === 'random') {
+                if (!randomLevel || !randomSubject) {
+                    throw new Error("Please provide the Exam Level and Subject.");
+                }
+                const payload = {
+                    level: randomLevel,
+                    subject: randomSubject,
+                    chapter_number: randomChapter,
+                    total_marks: parseInt(randomMarks, 10)
+                };
+                response = await fetch(`${API_URL}/api/generate-random-paper`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
                 });
             }
 
@@ -168,7 +189,7 @@ function App() {
                 </motion.div>
 
                 {/* --- Tab Selector --- */}
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '30px' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '30px', flexWrap: 'wrap' }}>
                     <button 
                         className={`tab-btn ${mode === 'upload' ? 'active' : ''}`}
                         onClick={() => { setMode('upload'); setError(null); setSuccess(false); }}
@@ -182,6 +203,13 @@ function App() {
                         style={{ background: mode === 'manual' ? 'rgba(59, 130, 246, 0.2)' : 'transparent', border: '1px solid #3b82f6', padding: '10px 20px', borderRadius: '12px', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
                     >
                         <LayoutList size={18} /> Manual Builder
+                    </button>
+                    <button 
+                        className={`tab-btn ${mode === 'random' ? 'active' : ''}`}
+                        onClick={() => { setMode('random'); setError(null); setSuccess(false); }}
+                        style={{ background: mode === 'random' ? 'rgba(59, 130, 246, 0.2)' : 'transparent', border: '1px solid #3b82f6', padding: '10px 20px', borderRadius: '12px', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                    >
+                        <Dices size={18} /> Random Generator
                     </button>
                 </div>
 
@@ -288,6 +316,48 @@ function App() {
                             >
                                 <Plus size={20} /> Add Another Question
                             </button>
+                        </div>
+                    </motion.div>
+                )}
+
+                {/* --- Random Mode UI --- */}
+                {mode === 'random' && (
+                    <motion.div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }} initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                        <div className="glass" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', textAlign: 'left' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>Auto-Generate Random Paper</h3>
+                            
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <label style={{ fontSize: '0.9rem', color: '#93c5fd', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Exam Level</label>
+                                    <select className="builder-input" value={randomLevel} onChange={(e) => setRandomLevel(e.target.value)} style={{ padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.2s', width: '100%'}}>
+                                        <option value="Foundation">Foundation</option>
+                                        <option value="Intermediate">Intermediate</option>
+                                        <option value="Final">Final</option>
+                                    </select>
+                                </div>
+                                
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <label style={{ fontSize: '0.9rem', color: '#93c5fd', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Subject</label>
+                                    <input className="builder-input" type="text" placeholder="e.g. FM" value={randomSubject} onChange={(e) => setRandomSubject(e.target.value)} style={{ padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.2s', width: '100%'}} />
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '20px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Chapter Filter (Optional)</label>
+                                    <input className="builder-input" type="text" placeholder="Leave blank for full book mix" value={randomChapter} onChange={(e) => setRandomChapter(e.target.value)} style={{ padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.2s', width: '100%'}} />
+                                </div>
+                                
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    <label style={{ fontSize: '0.9rem', color: '#3b82f6', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Target Marks</label>
+                                    <select className="builder-input" value={randomMarks} onChange={(e) => setRandomMarks(e.target.value)} style={{ padding: '12px', borderRadius: '10px', background: 'rgba(59, 130, 246, 0.1)', color: 'white', border: '1px solid rgba(59, 130, 246, 0.4)', transition: 'all 0.2s', width: '100%'}}>
+                                        <option value="25">25 Marks</option>
+                                        <option value="50">50 Marks (Approx)</option>
+                                        <option value="75">75 Marks (Approx)</option>
+                                        <option value="100">100 Marks (Full Test)</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
                     </motion.div>
                 )}

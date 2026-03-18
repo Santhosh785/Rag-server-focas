@@ -282,6 +282,12 @@ class QuestionItem(BaseModel):
 class PaperRequest(BaseModel):
     questions: List[QuestionItem]
 
+class RandomPaperRequest(BaseModel):
+    level: str
+    subject: str
+    chapter_number: Optional[str] = ""
+    total_marks: int = 50
+
 @app.post("/api/generate-paper-json")
 async def generate_paper_json(data: PaperRequest):
     try:
@@ -300,6 +306,65 @@ async def generate_paper_json(data: PaperRequest):
         raise
     except Exception as e:
         logger.error(f"Error generating paper from JSON: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/generate-random-paper")
+async def generate_random_paper(data: RandomPaperRequest):
+    try:
+        query = {
+            "level": {"$regex": f"^{re.escape(data.level)}$", "$options": "i"},
+            "subject": {"$regex": f"^{re.escape(data.subject)}$", "$options": "i"}
+        }
+        if data.chapter_number:
+            query["chapter"] = {"$regex": f"^{re.escape(data.chapter_number)}$", "$options": "i"}
+
+        # Fetch a large sample
+        pipeline = [{"$match": query}, {"$sample": {"size": 200}}]
+        results = list(col.aggregate(pipeline))
+
+        if not results:
+            raise HTTPException(status_code=404, detail="No matching questions found in DB for this criteria.")
+
+        selected_questions = []
+        current_marks = 0
+
+        for q in results:
+            if current_marks >= data.total_marks:
+                break
+            
+            q_text = q.get("question_text", "")
+            # Extract marks looking for "[... X Marks ...]"
+            marks_match = re.search(r'\[.*?(\d+)\s*Marks?', q_text, re.IGNORECASE)
+            q_marks = int(marks_match.group(1)) if marks_match and marks_match.group(1).isdigit() else 5
+
+            if current_marks + q_marks > data.total_marks + 2 and current_marks > 0:
+                continue
+                
+            selected_questions.append({
+                "level": q.get("level", data.level),
+                "subject": q.get("subject", data.subject),
+                "chapter_number": q.get("chapter", data.chapter_number or ""),
+                "unit": q.get("unit", ""),
+                "question_number": q.get("question_no", ""),
+                "marks": str(q_marks)
+            })
+            current_marks += q_marks
+
+        if not selected_questions:
+             raise HTTPException(status_code=400, detail="Could not create paper with requested marks.")
+
+        df = pd.DataFrame(selected_questions)
+        output = build_paper_from_df(df)
+        filename = f"FOCAS_Random_Paper_{datetime.now().strftime('%Y%m%d')}.docx"
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating random paper: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 def add_formatted_content(doc, text):
