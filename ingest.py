@@ -609,7 +609,7 @@ def validate_chunk(chunk: dict) -> list[str]:
     return warnings
 
 
-def ingest_pdf(pdf_path: str, level: str, subject: str, verbose: bool = False):
+def ingest_pdf(pdf_path: str, level: str, subject: str, rel_path: str, verbose: bool = False):
     filename = os.path.basename(pdf_path)
     chapter  = parse_chapter(filename)
     log.info(f"📄  {filename}  (level={level}, subject={subject}, chapter={chapter})")
@@ -626,13 +626,8 @@ def ingest_pdf(pdf_path: str, level: str, subject: str, verbose: bool = False):
 
     chunks = chunk_by_question(full_text)
     
-    # Filter out chunks with empty content to avoid OpenAI errors
-    valid_chunks = []
-    for chunk in chunks:
-        if chunk.get('content', '').strip():
-            valid_chunks.append(chunk)
-        else:
-            log.warning(f"  ⚠️ Skipping empty chunk Q{chunk.get('question_no', '?')}")
+    # Filter out chunks with empty content
+    valid_chunks = [c for c in chunks if c.get('content', '').strip()]
 
     if not valid_chunks:
         log.warning(f"  ⚠️  No valid content found in {filename} after chunking. Skipping.")
@@ -677,7 +672,7 @@ def ingest_pdf(pdf_path: str, level: str, subject: str, verbose: bool = False):
 
     result = col.bulk_write(ops)
     log.info(f"  ✅  Upserted {len(valid_chunks)} chunk(s)")
-    save_ingested_file(filename)
+    save_ingested_file(rel_path)
 
 
 def ensure_indexes():
@@ -724,7 +719,7 @@ def main():
                 final_level   = args.level   if args.level   else folder_level
                 final_subject = args.subject if args.subject else folder_subject
 
-                pdf_tasks.append((full_path, final_level, final_subject))
+                pdf_tasks.append((full_path, final_level, final_subject, rel_path))
 
     if not pdf_tasks:
         log.error(f"No PDFs found in {args.pdf_dir}")
@@ -735,12 +730,11 @@ def main():
     ingested_files = get_ingested_files()
     
     to_process = []
-    for pdf_path, level, subject in sorted(pdf_tasks):
-        filename = os.path.basename(pdf_path)
-        if filename in ingested_files:
-            log.info(f"⏭️  Skipping {filename} (already ingested)")
+    for pdf_path, level, subject, rel_path in sorted(pdf_tasks):
+        if rel_path in ingested_files:
+            log.info(f"⏭️  Skipping {rel_path} (already ingested)")
         else:
-            to_process.append((pdf_path, level, subject))
+            to_process.append((pdf_path, level, subject, rel_path))
 
     if not to_process:
         log.info("\n✨ All files are already up to date. Nothing to ingest.")
@@ -749,9 +743,9 @@ def main():
 
     log.info(f"🔍  Found {len(to_process)} new PDF(s) to ingest\n")
 
-    for pdf_path, level, subject in to_process:
+    for pdf_path, level, subject, rel_path in to_process:
         try:
-            ingest_pdf(pdf_path, level, subject, verbose=args.verbose)
+            ingest_pdf(pdf_path, level, subject, rel_path, verbose=args.verbose)
         except Exception as e:
             log.error(f"❌  Failed: {pdf_path}: {e}", exc_info=True)
 

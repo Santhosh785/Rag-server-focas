@@ -151,7 +151,7 @@ function App() {
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `Exam_Paper_${new Date().toISOString().slice(0, 10)}.docx`;
+            a.download = `FOCAS_Exam_Package_${new Date().toISOString().slice(0, 10)}.zip`;
             document.body.appendChild(a);
             a.click();
             window.URL.revokeObjectURL(url);
@@ -385,7 +385,7 @@ function App() {
                             style={{marginTop: '20px'}}
                         >
                             <CheckCircle2 size={20} />
-                            <span>Paper generated and downloaded successfully!</span>
+                            <span>Exam package (Paper + Answers) generated and downloaded!</span>
                         </motion.div>
                     )}
                 </AnimatePresence>
@@ -406,7 +406,7 @@ function App() {
                     ) : (
                         <Download size={20} />
                     )}
-                    {loading ? 'Processing...' : 'Generate Word Document'}
+                    {loading ? 'Processing...' : 'Generate Exam Package (ZIP)'}
                 </motion.button>
             </div>
 
