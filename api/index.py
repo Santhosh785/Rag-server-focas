@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
@@ -214,23 +215,34 @@ def build_paper_bundle_from_df(df: pd.DataFrame) -> io.BytesIO:
 
             head_table = qp_doc.add_table(rows=1, cols=2)
             head_table.autofit = False
-            head_table.columns[0].width = Inches(5.8)
-            head_table.columns[1].width = Inches(1.2)
+            head_table.columns[0].width = Inches(6.1)
+            head_table.columns[1].width = Inches(1.1)
+            
             c_left = head_table.rows[0].cells[0]
+            c_right = head_table.rows[0].cells[1]
+            
+            # Setup first paragraph in the cell
             p_head = c_left.paragraphs[0]
             p_head.paragraph_format.space_before = Pt(16) if questions_found > 1 else Pt(4)
+            p_head.paragraph_format.left_indent = Inches(0.4)
+            p_head.paragraph_format.first_line_indent = Inches(-0.4) # Creates the hanging indent for "QX. "
+            
             run_q_label = p_head.add_run(f"Q{questions_found}. ")
             run_q_label.bold = True
             run_q_label.font.size = Pt(11)
-            # Note: source_meta is extracted but not added to p_head as per user request to hide (RTP/MTP) metadata
-
+            
             if first_text_line:
-                body_run = p_head.add_run("  " + first_text_line.strip())
+                body_run = p_head.add_run(first_text_line.strip())
                 body_run.font.size = Pt(10)
 
-            c_right = head_table.rows[0].cells[1]
+            # Keep remaining lines INSIDE the same cell for consistent alignment
+            if remaining_lines:
+                add_formatted_content(c_left, "\n".join(remaining_lines), left_indent=Inches(0.4))
+
+            # Marks in the right cell
             p_marks = c_right.paragraphs[0]
             p_marks.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            p_marks.paragraph_format.space_before = Pt(16) if questions_found > 1 else Pt(4)
             if marks:
                  m_val = str(marks).strip()
                  if '[' not in m_val and 'Mark' not in m_val: m_val = f"[{m_val} Marks]"
@@ -240,7 +252,7 @@ def build_paper_bundle_from_df(df: pd.DataFrame) -> io.BytesIO:
                  mk_run.font.size = Pt(11)
 
             p_head.paragraph_format.space_after = Pt(2)
-            if remaining_lines: add_formatted_content(qp_doc, "\n".join(remaining_lines))
+
 
             # --- PROCESS ANSWER (for AK) ---
             ans_text = question_data.get("answer_text", "") or "No answer found in database."
@@ -428,8 +440,10 @@ async def generate_random_paper(data: RandomPaperRequest):
         logger.error(f"Error generating random paper: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-def add_formatted_content(doc, text):
-    """Detects ASCII tables in text and converts them to native Word tables."""
+def add_formatted_content(container, text, left_indent=None):
+    """Detects ASCII tables in text and converts them to native Word tables.
+    Container can be a Document or a Table Cell.
+    """
     lines = text.split('\n')
     table_lines = []
     
@@ -442,18 +456,20 @@ def add_formatted_content(doc, text):
             table_lines.append(line)
         else:
             if table_lines:
-                create_word_table(doc, table_lines)
+                create_word_table(container, table_lines)
                 table_lines = []
-            if stripped:  # REMOVED `or line == ""` TO COMPACT THE SPACING!
-                p = doc.add_paragraph(stripped)
+            if stripped: 
+                p = container.add_paragraph(stripped)
                 p.style.font.size = Pt(10)
+                if left_indent: p.paragraph_format.left_indent = left_indent
                 p.paragraph_format.space_after = Pt(4)
                 p.paragraph_format.line_spacing = 1.0
 
     if table_lines:
-        create_word_table(doc, table_lines)
+        create_word_table(container, table_lines)
 
-def create_word_table(doc, table_lines):
+
+def create_word_table(container, table_lines):
     """Parses ASCII pipes into a proportional Word table."""
     data_rows = []
     for line in table_lines:
@@ -498,7 +514,8 @@ def create_word_table(doc, table_lines):
     data_rows = filtered_data
     num_cols = len(cols_to_keep)
 
-    table = doc.add_table(rows=len(data_rows), cols=num_cols)
+    table = container.add_table(rows=len(data_rows), cols=num_cols)
+
     table.style = 'Table Grid'
     table.autofit = True
     table.allow_autofit = True
@@ -524,10 +541,11 @@ def create_word_table(doc, table_lines):
 
     # Add a small buffer paragraph after table
     try:
-        p_buf = doc.add_paragraph()
+        p_buf = container.add_paragraph()
         p_buf.paragraph_format.space_after = Pt(4)
     except:
         pass
+
 
 if __name__ == "__main__":
     import uvicorn
