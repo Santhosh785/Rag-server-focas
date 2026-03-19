@@ -1,68 +1,80 @@
-# Focas PDF Ingestion & Query
+# FOCAS Exam Paper Generator
+
+A robust PDF ingestion and exam paper generation system for study materials.
+
+## Project Structure
+
+```text
+├── api/                # Vercel entry point
+├── backend/            # Core FastAPI application
+│   ├── ingestion/     # PDF extraction & processing
+│   ├── services/      # Business logic (e.g., paper generation)
+│   ├── utils/         # Helper functions
+│   └── main.py        # FastAPI app entry point
+├── frontend/           # React + Vite frontend
+├── scripts/            # Debugging and maintenance scripts
+├── tests/              # Verification and repro scripts
+├── pdfs/               # Source PDF files (Level/Subject organization)
+└── requirements.txt    # Python dependencies
+```
 
 ## Setup
-Ensure you have a `.env` file in the root directory with the following variables:
-- `MONGODB_URI`
-- `OPENAI_API_KEY`
 
-Then install dependencies:
+1. Create a `.env` file in the root with:
+   - `MONGODB_URI`
+   - `OPENAI_API_KEY`
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+## Workflow
+
+### 1. Ingest PDFs
+Extract questions and answers from PDFs into MongoDB.
 ```bash
-./.venv/bin/python -m pip install -r requirements.txt
+python -m backend.ingestion.ingest --pdf_dir ./pdfs
 ```
 
-
-## Ingest PDFs
-Ingests all PDFs from the `./pdfs` directory, skipping already ingested files.
+### 2. Run Backend
+Start the FastAPI server (default: port 8000).
 ```bash
-./.venv/bin/python ingest.py --pdf_dir ./pdfs
+python -m backend.main
 ```
 
-## Query Database
-Find a specific question by Level, Subject, Chapter, and Question Number.
-```bash
-./.venv/bin/python query.py --level Final --subject FM --chapter 1 --question 3
-```
-
-## Sync Tracker
-Refresh the `ingested_files.json` tracker from the database.
-```bash
-./.venv/bin/python sync_ingested.py
-```
-
-## Run Backend (FastAPI)
-Navigate to the backend directory and run the server.
-```bash
-cd backend
-../.venv/bin/python main.py
-```
-
-## Run Frontend (React/Vite)
-Navigate to the frontend directory and start the development server.
+### 3. Run Frontend
+Navigate to the frontend folder and start the dev server.
 ```bash
 cd frontend
+npm install
 npm run dev
 ```
 
-## Export Questions
-Export questions from the database into a Markdown file for easy verification.
-
-- **Export All:**
-  ```bash
-  ./.venv/bin/python export_all.py
-  ```
-- **Filter by Chapter:**
-  ```bash
-  ./.venv/bin/python export_all.py --chapter 3
-  ```
-- **Filter by Level/Subject:**
-  ```bash
-  ./.venv/bin/python export_all.py --level Intermediate --subject FM --chapter 1
-  ```
-The output file will be named according to your filters (e.g., `export_ch3.md`).
-
-## Verify Ingestion
-Automatically compare a PDF's content against the database to find missing questions.
+### 4. Verify Ingestion
+Compare a PDF's content against the database to find missing questions.
 ```bash
-./.venv/bin/python verify_ingestion.py --pdf "./path/to/your.pdf"
+python tests/verify_ingestion.py --pdf "./pdfs/Path/To/Your.pdf"
 ```
-This tool scans the PDF for "Question X" markers and cross-checks them with MongoDB. It will list exactly which questions are missing from the database.
+
+## Useful Scripts
+
+- **Export to Markdown:**
+  ```bash
+  python scripts/export_all.py --subject FM --chapter 1
+  ```
+- **Sync Ingested Tracker:**
+  ```bash
+  python scripts/sync_ingested.py
+  ```
+- **Debug Regex:**
+  ```bash
+  python scripts/debug_regex_simple.py
+  ```
+
+## Deployment
+
+The app is configured for Vercel deployment using the `api/index.py` entry point and `vercel.json` configuration.
+1. Connect github repo to Vercel.
+2. Set Environment Variables (`MONGODB_URI`, `OPENAI_API_KEY`).
+3. Vercel will automatically build the React frontend and Python backend.

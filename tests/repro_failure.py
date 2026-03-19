@@ -1,4 +1,8 @@
-from ingest import extract_pdf, chunk_by_question, split_q_and_a
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from backend.ingestion.ingest import extract_pdf, chunk_by_question, split_q_and_a
+
 import os
 
 pdf2 = 'pdfs/Intermediate/FM/Chapter_2_TYPES OF FINANCING.pdf'
