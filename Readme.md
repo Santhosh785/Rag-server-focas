@@ -27,6 +27,9 @@ A robust PDF ingestion and exam paper generation system for study materials.
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
+
+
+   source rag_venv/bin/activate
    ```
 
 ## Workflow

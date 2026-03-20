@@ -23,6 +23,15 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 import pdfplumber
+import base64
+from io import BytesIO
+from PIL import Image
+try:
+    from pdf2image import convert_from_path
+    HAS_PDF2IMAGE = True
+except ImportError:
+    HAS_PDF2IMAGE = False
+
 from openai import OpenAI
 from pymongo import MongoClient, UpdateOne
 from dotenv import load_dotenv
@@ -41,6 +50,7 @@ if not OPENAI_KEY:
 DB_NAME     = "exam_db"
 COLLECTION  = "questions"
 EMBED_MODEL = "text-embedding-3-small"
+VISION_MODEL = "gpt-4o-mini" # Fast & good OCR
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -305,6 +315,54 @@ def render_table(rows: list[list]) -> str:
 
 # ── Page content extraction ────────────────────────────────────────────────────
 
+# ── Vision extraction (for scanned PDFs) ──────────────────────────────────────
+
+def extract_page_content_vision(image: Image.Image) -> str:
+    """
+    Use OpenAI's vision model to extract text from a page image.
+    Preserves question/answer structure and renders tables as ASCII.
+    """
+    # 1. Resize and compress to stay under 4MB
+    max_dim = 1600
+    if max(image.size) > max_dim:
+        image.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+    
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=85)
+    base64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    prompt = (
+        "You are an expert academic digitizer for CA (Chartered Accountancy) prep material. Extract all text from this scanned page.\n\n"
+        "GUIDELINES:\n"
+        "1. Extract the text exactly as it appears. Keep headers like 'Question 5' or 'Question 10'.\n"
+        "2. IMPORTANT: If there is an Answer section, make sure it is preceded by a new line with the word 'Answer' or 'Solution' on its own line.\n"
+        "3. If there are tables, represent them as ASCII tables (| and -).\n"
+        "4. If there are watermark headers like 'BY CA ATUL AGARWAL' or page numbers at the bottom, try to exclude them if possible to reduce noise.\n"
+        "5. Fix obvious OCR glitches (like 'Ans per' -> 'As per') but do not summarize."
+    )
+
+    try:
+        response = openai_client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
+                        },
+                    ],
+                }
+            ],
+            max_tokens=2000,
+        )
+        return response.choices[0].message.content or ""
+    except Exception as e:
+        log.error(f"  Vision extraction error: {e}")
+        return ""
+
 def _word_in_bbox(w: dict, bbox: tuple) -> bool:
     tx0, ty0, tx1, ty1 = bbox
     return (
@@ -397,6 +455,13 @@ def extract_page_content(page) -> str:
 
     return '\n'.join(text for _, text in all_blocks if text.strip())
 
+
+def is_page_scanned(page) -> bool:
+    """Detect if a page is likely a scan (very little text compared to its area)."""
+    text = page.extract_text() or ""
+    # If a full page has fewer than 100 characters, it's almost certainly a scan or graphic
+    return len(text.strip()) < 100
+
 # ── Full PDF extraction ────────────────────────────────────────────────────────
 
 # Matches page footer patterns like "3.1 | P a g e" or actual page numbers
@@ -445,13 +510,62 @@ def clean_text(text: str) -> str:
     return re.sub(r'\n{3,}', '\n\n', '\n'.join(cleaned)).strip()
 
 
-def extract_pdf(pdf_path: str) -> str:
-    """Extract all pages with fraction reconstruction."""
+def extract_pdf(pdf_path: str, force_vision: bool = False) -> str:
+    """Extract all pages with fraction reconstruction. Falls back to Vision for scans."""
     parts = []
+    
+    # 1. First Pass: Check if the whole document is likely a scan
+    is_scanned_doc = force_vision
+    if not is_scanned_doc:
+        with pdfplumber.open(pdf_path) as pdf:
+            # Check first 3 pages
+            checks = 0
+            scanned_votes = 0
+            for page in pdf.pages[:3]:
+                checks += 1
+                if is_page_scanned(page):
+                    scanned_votes += 1
+            if checks > 0 and scanned_votes / checks > 0.6:
+                is_scanned_doc = True
+                log.info(f"  🔍 Detected scanned PDF. Switching to Vision mode...")
+
+    # 2. Extract based on type
+    if is_scanned_doc:
+        if not HAS_PDF2IMAGE:
+            log.error("❌  'pdf2image' or 'poppler' missing. Cannot process scanned PDF.")
+            return ""
+        
+        try:
+            images = convert_from_path(pdf_path, dpi=200) # 200dpi is good enough for text
+            log.info(f"  📸  Converted {len(images)} pages to images. Processing with {VISION_MODEL}...")
+            for i, img in enumerate(images, 1):
+                try:
+                    content = extract_page_content_vision(img)
+                    parts.append(content)
+                except Exception as e:
+                    log.error(f"  Vision Error on page {i}: {e}")
+            return clean_text('\n'.join(parts))
+        except Exception as e:
+            log.error(f"  Critical error during PDF-to-Image conversion: {e}")
+            return ""
+
+    # 3. Standard text extraction fallback
     with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages, 1):
             try:
-                content = extract_page_content(page)
+                # If a specific page is scanned in a digital document, we could still use vision
+                if is_page_scanned(page):
+                    if HAS_PDF2IMAGE:
+                        log.info(f"  📸  Page {page_num} looks scanned. Using Vision fallback...")
+                        # We have to convert just this page. Easier to convert all but more expensive.
+                        # For now, we'll just use the standard fallback unless the whole doc is scanned.
+                        # But let's try to get a single image if possible.
+                        img = convert_from_path(pdf_path, first_page=page_num, last_page=page_num)[0]
+                        content = extract_page_content_vision(img)
+                        parts.append(content)
+                        continue
+                
+                content = extract_page_content_vision(page) if force_vision else extract_page_content(page)
                 parts.append(content)
             except Exception as e:
                 log.warning(f"  Page {page_num} error: {e}")
@@ -469,14 +583,17 @@ def parse_chapter(filename: str) -> str:
 def split_q_and_a(body: str) -> tuple[str, str]:
     """Split question body at the first recognized Answer/Solution marker."""
     patterns = [
-        # Standard Colon style: "Answer: ..."
+        # Standalone "Answer" line (even if it has spaces around it)
+        r'(?:\n|^)\s*(?:ANSWER|Answer|SOLUTION|Solution)\b\s*[:\-\*\.]*\s*\n',
+        # Markdown Bold or headers
+        r'(?:\n|^)\s*(?:\*\*|#+)\s*(?:ANSWER|Answer|SOLUTION|Solution)\b\s*(?:\*\*)?[\s:\-\.]*',
+        # Standard Colon style
         r'\b(?:ANSWER|Answer|SOLUTION|Solution|Soln?|Suggested\s+Answer|Suggested\s+Solution|Suggested\s+Soln)\s*[:\-\.]',
-        # Permissive: any line that starts with "Answer" or "Solution" following a line break
-        r'^\s*\|?\s*(?:ANSWER|Answer|SOLUTION|Solution|Soln?|Suggested\s+Answer|Suggested\s+Solution)\b',
-        # Table-style box: "| Answer |" or "| ANSWER |"
-        r'\|\s*(?:ANSWER|Answer|SOLUTION|Solution|Soln?|Suggested\s+Answer|Suggested\s+Solution)\s*\|',
-        # Rare cases where Answer follows a dot
-        r'\.\s+(?:ANSWER|Answer|SOLUTION|Solution|Suggested\s+Answer)\b',
+        # Permissive: any standalone "Answer" word
+        r'\b(?:ANSWER|Answer|SOLUTION|Solution|Soln?)\b',
+        # Table-style box
+        r'\|\s*(?:ANSWER|Answer|SOLUTION|Solution|Soln?)\s*\|',
+        # Fallback: Working Notes
         r'^\s*\|?\s*Working\s+Notes?\b',
     ]
     for pat in patterns:
@@ -609,12 +726,12 @@ def validate_chunk(chunk: dict) -> list[str]:
     return warnings
 
 
-def ingest_pdf(pdf_path: str, level: str, subject: str, rel_path: str, verbose: bool = False):
+def ingest_pdf(pdf_path: str, level: str, subject: str, rel_path: str, verbose: bool = False, force_vision: bool = False):
     filename = os.path.basename(pdf_path)
     chapter  = parse_chapter(filename)
     log.info(f"📄  {filename}  (level={level}, subject={subject}, chapter={chapter})")
 
-    full_text = extract_pdf(pdf_path)
+    full_text = extract_pdf(pdf_path, force_vision=force_vision)
     if not full_text.strip():
         log.warning(f"  ⚠️  No text could be extracted from {filename}. Skipping database update.")
         return
@@ -689,6 +806,7 @@ def main():
     parser.add_argument("--pdf_dir", default="./pdfs")
     parser.add_argument("--level", help="Manually set Level for all PDFs in this run")
     parser.add_argument("--subject", help="Manually set Subject for all PDFs in this run")
+    parser.add_argument("--force_vision", action="store_true", help="Force OCR vision for all PDFs (use for scans)")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -745,7 +863,7 @@ def main():
 
     for pdf_path, level, subject, rel_path in to_process:
         try:
-            ingest_pdf(pdf_path, level, subject, rel_path, verbose=args.verbose)
+            ingest_pdf(pdf_path, level, subject, rel_path, verbose=args.verbose, force_vision=args.force_vision)
         except Exception as e:
             log.error(f"❌  Failed: {pdf_path}: {e}", exc_info=True)
 

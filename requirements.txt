@@ -3,6 +3,8 @@ openai>=1.30.0
 pymongo>=4.7.0
 pdfplumber>=0.11.0
 python-dotenv>=1.0.0
+pdf2image>=1.17.0
+Pillow>=10.3.0
 
 # Backend dependencies
 fastapi>=0.111.0
