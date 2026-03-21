@@ -6,6 +6,7 @@ from datetime import datetime
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT
 import logging
 
 from backend.utils.docx_utils import (
@@ -50,7 +51,8 @@ def build_paper_bundle_from_df(df: pd.DataFrame, col) -> io.BytesIO:
     for doc, title_tag in [(qp_doc, "MODEL PAPER"), (ak_doc, "ANSWER KEY")]:
         # TOP HEADER BAR
         bar_table = doc.add_table(rows=1, cols=1)
-        bar_table.width = Inches(7.3)
+        bar_table.width = Inches(7.2)
+        bar_table.alignment = WD_TABLE_ALIGNMENT.CENTER
         cell = bar_table.rows[0].cells[0]
         set_cell_shading(cell, "002060") # Dark Blue
         p = cell.paragraphs[0]
@@ -74,7 +76,8 @@ def build_paper_bundle_from_df(df: pd.DataFrame, col) -> io.BytesIO:
 
         # STATS ROW
         stats_table = doc.add_table(rows=1, cols=3)
-        stats_table.width = Inches(7.3)
+        stats_table.width = Inches(7.2)
+        stats_table.alignment = WD_TABLE_ALIGNMENT.CENTER
         stats_table.style = 'Table Grid'
         stats_data = [f"Total Marks: {total_marks}", "Time: 3 Hours", "Date: _________"]
         for i, text in enumerate(stats_data):
@@ -89,7 +92,8 @@ def build_paper_bundle_from_df(df: pd.DataFrame, col) -> io.BytesIO:
     # --- INSTRUCTIONS (Only for QP) ---
     qp_doc.add_paragraph().paragraph_format.space_after = Pt(4)
     inst_bar = qp_doc.add_table(rows=1, cols=1)
-    inst_bar.width = Inches(7.3)
+    inst_bar.width = Inches(7.2)
+    inst_bar.alignment = WD_TABLE_ALIGNMENT.CENTER
     inst_cell = inst_bar.rows[0].cells[0]
     set_cell_shading(inst_cell, "FFF2CC") # Pale Yellow
     ip = inst_cell.paragraphs[0]
@@ -104,7 +108,8 @@ def build_paper_bundle_from_df(df: pd.DataFrame, col) -> io.BytesIO:
     for doc in [qp_doc, ak_doc]:
         doc.add_paragraph().paragraph_format.space_after = Pt(6)
         part_table = doc.add_table(rows=1, cols=1)
-        part_table.width = Inches(7.3)
+        part_table.width = Inches(7.2)
+        part_table.alignment = WD_TABLE_ALIGNMENT.CENTER
         part_cell = part_table.rows[0].cells[0]
         set_cell_shading(part_cell, "002060") # Dark Blue
         pp = part_cell.paragraphs[0]
@@ -160,23 +165,27 @@ def build_paper_bundle_from_df(df: pd.DataFrame, col) -> io.BytesIO:
 
             head_table = qp_doc.add_table(rows=1, cols=2)
             head_table.autofit = False
-            head_table.columns[0].width = Inches(6.1)
-            head_table.columns[1].width = Inches(1.1)
+            head_table.width = Inches(7.2)
+            head_table.alignment = WD_TABLE_ALIGNMENT.CENTER
             
+            # Use explicit widths for each cell
             c_left = head_table.rows[0].cells[0]
             c_right = head_table.rows[0].cells[1]
+            c_left.width = Inches(6.2)
+            c_right.width = Inches(1.0)
             
             # Setup first paragraph in the cell
             p_head = c_left.paragraphs[0]
             p_head.paragraph_format.space_before = Pt(16) if questions_found > 1 else Pt(4)
             p_head.paragraph_format.left_indent = Inches(0.4)
-            p_head.paragraph_format.first_line_indent = Inches(-0.4) # Creates the hanging indent for "QX. "
+            p_head.paragraph_format.first_line_indent = Inches(-0.4)
             
             run_q_label = p_head.add_run(f"Q{questions_found}. ")
             run_q_label.bold = True
             run_q_label.font.size = Pt(11)
             
             if first_text_line:
+                # Add a space before body text to prevent "Q1.Beta"
                 body_run = p_head.add_run(first_text_line.strip())
                 body_run.font.size = Pt(10)
 
