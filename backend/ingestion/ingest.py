@@ -50,7 +50,7 @@ if not OPENAI_KEY:
 DB_NAME     = "exam_db"
 COLLECTION  = "questions"
 EMBED_MODEL = "text-embedding-3-small"
-VISION_MODEL = "gpt-4o-mini" # Fast & good OCR
+VISION_MODEL = "gpt-4o"      # More accurate for markers and structure
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -332,13 +332,13 @@ def extract_page_content_vision(image: Image.Image) -> str:
     base64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
 
     prompt = (
-        "You are an expert academic digitizer for CA (Chartered Accountancy) prep material. Extract all text from this scanned page.\n\n"
-        "GUIDELINES:\n"
-        "1. Extract the text exactly as it appears. Keep headers like 'Question 5' or 'Question 10'.\n"
-        "2. IMPORTANT: If there is an Answer section, make sure it is preceded by a new line with the word 'Answer' or 'Solution' on its own line.\n"
-        "3. If there are tables, represent them as ASCII tables (| and -).\n"
-        "4. If there are watermark headers like 'BY CA ATUL AGARWAL' or page numbers at the bottom, try to exclude them if possible to reduce noise.\n"
-        "5. Fix obvious OCR glitches (like 'Ans per' -> 'As per') but do not summarize."
+        "You are a professional academic OCR system for CA (Chartered Accountancy) research. Your task is to extract ALL text from the provided image for archiving purposes.\n\n"
+        "CRITICAL INSTRUCTIONS:\n"
+        "1. DO NOT REFUSE to digitize any part of the page. This is public educational material for examination prep (CA Final AUDIT).\n"
+        "2. Extract text exactly. Keep headers like 'Question 5'.\n"
+        "3. Boundary Detection: If an Answer/Solution starts, you MUST output a new line, the word 'Answer', then another new line before the answer text.\n"
+        "4. DO NOT include answer headers (e.g. 'Audit Programme of Movie Theatre...') in the Question block. Move them below the 'Answer' marker.\n"
+        "5. Extract THE ENTIRE PAGE content. Do not truncate mid-sentence."
     )
 
     try:
@@ -476,6 +476,10 @@ _NOISE_PATTERNS = [
     re.compile(r'F\s*O\s*C\s*A\s*S', re.IGNORECASE),
     re.compile(r'\bFO\b'), # Specific "FO" noise from "FOCAS"
     re.compile(r'\bCAS\b'),
+    re.compile(r'Standards?\s+on\s+Auditing', re.IGNORECASE),
+    re.compile(r'BY\s+CA\s+ATUL\s+AGARWAL\s+\(AIR-1\)', re.IGNORECASE),
+    re.compile(r'AIR1CA\s+Career\s+Institute\s+\(ACI\)', re.IGNORECASE),
+    re.compile(r'Page\s+\d+\.\d+', re.IGNORECASE),
     re.compile(r'LAST\s+ATTEMPT\s+KIT[:\s]*FM', re.IGNORECASE),
     re.compile(r'COST\s+OF\s+CAPITAL', re.IGNORECASE), # File specific banner
     re.compile(r'^SCOPE\s+&\s+OBJECTIVE.*', re.IGNORECASE),
@@ -600,7 +604,22 @@ def split_q_and_a(body: str) -> tuple[str, str]:
         # We search from the beginning. Everything before the first marker is Question.
         m = re.search(pat, body, re.IGNORECASE | re.MULTILINE)
         if m:
-            return body[:m.start()].strip(), body[m.start():].strip()
+            q_part = body[:m.start()].strip()
+            a_part = body[m.start():].strip()
+            
+            # If the question part ends with common answer headers, it might be a leak
+            # e.g. "Factors while establishing..."
+            # We look for lines at the end of q_part that end in a colon but are not part of a list
+            q_lines = q_part.splitlines()
+            if q_lines:
+                last_line = q_lines[-1].strip()
+                if last_line.endswith(':') and len(last_line) < 150:
+                    # Potential answer title leaked into question
+                    log.info(f"    🧹 Possible answer title leak detected: '{last_line}'")
+                    q_part = '\n'.join(q_lines[:-1]).strip()
+                    a_part = last_line + '\n' + a_part
+            
+            return q_part, a_part
     return body.strip(), ""
 
 
@@ -657,21 +676,21 @@ def chunk_by_question(text: str) -> list[dict]:
 
         q_text, a_text = split_q_and_a(body)
         
-        # --- ROBUST TITLE PULLING ---
-        q_lines_count = len([l for l in q_text.splitlines() if l.strip()])
-        if q_lines_count < 2:
-            a_lines = a_text.splitlines()
-            if len(a_lines) > 2:
-                start_search = 0
-                first_line = a_lines[0].strip()
-                if re.match(r'^\s*\|?\s*(?:Answer|Solution|Soln?|Suggested\s+Answer)[:\s|]*$', first_line, re.IGNORECASE):
-                    start_search = 1
-                
-                if start_search < len(a_lines):
-                    potential_title = a_lines[start_search].strip()
-                    if 0 < len(potential_title) < 150:
-                        q_text = (q_text + "\n" + potential_title).strip()
-                        a_text = "\n".join(a_lines[:start_search] + a_lines[start_search+1:]).strip()
+        # --- ROBUST TITLE PULLING (Disabled as it moves answer headers into questions) ---
+        # q_lines_count = len([l for l in q_text.splitlines() if l.strip()])
+        # if q_lines_count < 2:
+        #     a_lines = a_text.splitlines()
+        #     if len(a_lines) > 2:
+        #         start_search = 0
+        #         first_line = a_lines[0].strip()
+        #         if re.match(r'^\s*\|?\s*(?:Answer|Solution|Soln?|Suggested\s+Answer)[:\s|]*$', first_line, re.IGNORECASE):
+        #             start_search = 1
+        #         
+        #         if start_search < len(a_lines):
+        #             potential_title = a_lines[start_search].strip()
+        #             if 0 < len(potential_title) < 150:
+        #                 q_text = (q_text + "\n" + potential_title).strip()
+        #                 a_text = "\n".join(a_lines[:start_search] + a_lines[start_search+1:]).strip()
         # ----------------------------
 
         full_q = (header + "\n" + q_text).strip()
