@@ -12,6 +12,8 @@ function App() {
     // Manual Mode State
     const [globalLevel, setGlobalLevel] = useState('Intermediate');
     const [globalSubject, setGlobalSubject] = useState('FM');
+    const [availableChapters, setAvailableChapters] = useState([]);
+    const [loadingChapters, setLoadingChapters] = useState(false);
     const [questions, setQuestions] = useState([
         { chapter_number: '', unit: '', question_number: '', marks: ''}
     ]);
@@ -75,6 +77,36 @@ function App() {
         if (questions.length === 1) return;
         setQuestions(questions.filter((_, i) => i !== index));
     };
+
+    // Fetch chapters when subject changes
+    const fetchChapters = async (subject) => {
+        if (!subject) return;
+        setLoadingChapters(true);
+        try {
+            const API_URL = import.meta.env.VITE_API_URL || '';
+            const response = await fetch(`${API_URL}/api/chapters/${subject}`);
+            if (response.ok) {
+                const data = await response.json();
+                setAvailableChapters(data.chapters || []);
+            } else {
+                setAvailableChapters([]);
+            }
+        } catch (err) {
+            console.error('Error fetching chapters:', err);
+            setAvailableChapters([]);
+        } finally {
+            setLoadingChapters(false);
+        }
+    };
+
+    // Fetch chapters when globalSubject changes in manual mode or randomSubject in random mode
+    React.useEffect(() => {
+        if (mode === 'manual' && globalSubject) {
+            fetchChapters(globalSubject);
+        } else if (mode === 'random' && randomSubject) {
+            fetchChapters(randomSubject);
+        }
+    }, [globalSubject, randomSubject, mode]);
 
     // --- Submit Handler ---
     const generatePaper = async () => {
@@ -292,7 +324,20 @@ function App() {
                                         exit={{ opacity: 0, height: 0 }}
                                         style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}
                                     >
-                                        <input className="builder-input" type="text" placeholder="e.g. 9" value={q.chapter_number} onChange={(e) => updateQuestion(idx, 'chapter_number', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid transparent', transition: 'all 0.2s', width: '100%'}} />
+                                        <select
+                                            className="builder-input"
+                                            value={q.chapter_number}
+                                            onChange={(e) => updateQuestion(idx, 'chapter_number', e.target.value)}
+                                            style={{ padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid transparent', transition: 'all 0.2s', width: '100%'}}
+                                            disabled={loadingChapters || availableChapters.length === 0}
+                                        >
+                                            <option value="">Select Chapter...</option>
+                                            {availableChapters.map(ch => (
+                                                <option key={ch.number} value={ch.number}>
+                                                    {ch.display}
+                                                </option>
+                                            ))}
+                                        </select>
                                         <input className="builder-input" type="text" placeholder="blank if no unit" value={q.unit} onChange={(e) => updateQuestion(idx, 'unit', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid transparent', transition: 'all 0.2s', width: '100%'}} />
                                         <input className="builder-input" type="text" placeholder="Q1" value={q.question_number} onChange={(e) => updateQuestion(idx, 'question_number', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(59, 130, 246, 0.1)', color: 'white', border: '1px solid rgba(59, 130, 246, 0.3)', transition: 'all 0.2s', width: '100%'}} />
                                         <input className="builder-input" type="text" placeholder="5" value={q.marks} onChange={(e) => updateQuestion(idx, 'marks', e.target.value)} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(59, 130, 246, 0.1)', color: 'white', border: '1px solid rgba(59, 130, 246, 0.3)', transition: 'all 0.2s', width: '100%'}} />
@@ -345,7 +390,20 @@ function App() {
                             <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '20px' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Chapter Filter (Optional)</label>
-                                    <input className="builder-input" type="text" placeholder="Leave blank for full book mix" value={randomChapter} onChange={(e) => setRandomChapter(e.target.value)} style={{ padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.2s', width: '100%'}} />
+                                    <select
+                                        className="builder-input"
+                                        value={randomChapter}
+                                        onChange={(e) => setRandomChapter(e.target.value)}
+                                        style={{ padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid rgba(255,255,255,0.1)', transition: 'all 0.2s', width: '100%'}}
+                                        disabled={loadingChapters}
+                                    >
+                                        <option value="">All Chapters (Full book mix)</option>
+                                        {availableChapters.map(ch => (
+                                            <option key={ch.number} value={ch.number}>
+                                                {ch.display}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
                                 
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

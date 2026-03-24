@@ -141,6 +141,46 @@ async def generate_paper_json(data: PaperRequest):
         logger.error(f"Error generating paper from JSON: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/chapters/{subject}")
+async def get_chapters(subject: str):
+    """Get all available chapters for a subject with their names"""
+    try:
+        import json
+        # Read the ingestion status file to get chapter names
+        ingestion_file = f"ingestion_status/{subject}.json"
+
+        if not os.path.exists(ingestion_file):
+            raise HTTPException(status_code=404, detail=f"Subject '{subject}' not found")
+
+        with open(ingestion_file, 'r') as f:
+            pdf_files = json.load(f)
+
+        # Extract chapter numbers and names from filenames
+        chapters = []
+        for pdf_path in pdf_files:
+            # Extract filename: "Final/AUDIT/Chapter_50_DUE DILIGENCE...pdf"
+            filename = os.path.basename(pdf_path)
+            # Match pattern: Chapter_XX_NAME.pdf
+            match = re.match(r'Chapter_(\d+)_(.+)\.pdf', filename)
+            if match:
+                chapter_num = match.group(1)
+                chapter_name = match.group(2).replace('_', ' ').strip()
+                chapters.append({
+                    "number": chapter_num,
+                    "name": chapter_name,
+                    "display": f"Ch {chapter_num}: {chapter_name}"
+                })
+
+        # Sort by chapter number
+        chapters.sort(key=lambda x: int(x["number"]))
+        return {"subject": subject, "chapters": chapters}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching chapters: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/generate-random-paper")
 async def generate_random_paper(data: RandomPaperRequest):
     try:
