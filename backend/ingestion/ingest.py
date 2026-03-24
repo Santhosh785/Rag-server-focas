@@ -50,7 +50,7 @@ if not OPENAI_KEY:
 DB_NAME     = "exam_db"
 COLLECTION  = "questions"
 EMBED_MODEL = "text-embedding-3-small"
-VISION_MODEL = "gpt-4o"      # More accurate for markers and structure
+VISION_MODEL = "gpt-4o" # Switched to full gpt-4o for high-fidelity extraction as mini was truncating long answers.
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 
@@ -61,22 +61,32 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-INGESTED_TRACKER = "ingested_files.json"
+INGESTED_TRACKER_DIR = "ingestion_status"
 
-def get_ingested_files():
-    if os.path.exists(INGESTED_TRACKER):
+def get_ingested_files(subject: str = None):
+    """Retrieve set of ingested filenames for a specific subject from its JSON tracker."""
+    if not subject:
+        # Fallback for general or unknown subjects
+        tracker = "ingested_files.json"
+    else:
+        tracker = os.path.join(INGESTED_TRACKER_DIR, f"{subject}.json")
+
+    if os.path.exists(tracker):
         try:
-            with open(INGESTED_TRACKER, "r") as f:
+            with open(tracker, "r") as f:
                 return set(json.load(f))
         except (json.JSONDecodeError, TypeError):
             return set()
     return set()
 
-def save_ingested_file(filename):
-    ingested = list(get_ingested_files())
+def save_ingested_file(filename: str, subject: str):
+    """Save a filename to the subject-specific JSON tracker."""
+    ingested = list(get_ingested_files(subject))
     if filename not in ingested:
         ingested.append(filename)
-        with open(INGESTED_TRACKER, "w") as f:
+        os.makedirs(INGESTED_TRACKER_DIR, exist_ok=True)
+        tracker = os.path.join(INGESTED_TRACKER_DIR, f"{subject or 'unknown'}.json")
+        with open(tracker, "w") as f:
             json.dump(ingested, f, indent=4)
 
 # ── Math Unicode → ASCII ───────────────────────────────────────────────────────
@@ -317,28 +327,34 @@ def render_table(rows: list[list]) -> str:
 
 # ── Vision extraction (for scanned PDFs) ──────────────────────────────────────
 
-def extract_page_content_vision(image: Image.Image) -> str:
+def extract_page_content_vision(image: Image.Image, prev_context: str = "") -> str:
     """
     Use OpenAI's vision model to extract text from a page image.
     Preserves question/answer structure and renders tables as ASCII.
     """
+    # Pass previous context to avoid truncation at page boundaries
+    context_note = ""
+    if prev_context.strip():
+        last_few = prev_context.strip()[-200:].replace('\n', ' ')
+        context_note = f"\n\nCONTEXT FROM PREVIOUS PAGE: The previous page ended with: '...{last_few}'. If this page starts with a continuation of this sentence, ensure you capture it word-for-word before continuing with new content."
+
     # 1. Resize and compress to stay under 4MB
-    max_dim = 1600
+    max_dim = 2000 # Increased for better clarity
     if max(image.size) > max_dim:
         image.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
     
     buf = BytesIO()
-    image.save(buf, format="JPEG", quality=85)
+    image.save(buf, format="JPEG", quality=90)
     base64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
 
     prompt = (
-        "You are a professional academic OCR system for CA (Chartered Accountancy) research. Your task is to extract ALL text from the provided image for archiving purposes.\n\n"
-        "CRITICAL INSTRUCTIONS:\n"
-        "1. DO NOT REFUSE to digitize any part of the page. This is public educational material for examination prep (CA Final AUDIT).\n"
-        "2. Extract text exactly. Keep headers like 'Question 5'.\n"
-        "3. Boundary Detection: If an Answer/Solution starts, you MUST output a new line, the word 'Answer', then another new line before the answer text.\n"
-        "4. DO NOT include answer headers (e.g. 'Audit Programme of Movie Theatre...') in the Question block. Move them below the 'Answer' marker.\n"
-        "5. Extract THE ENTIRE PAGE content. Do not truncate mid-sentence."
+        "You are a verbatim OCR system. Your goal is to extract ALL text visible in the provided image into a clean text stream.\n\n"
+        "RULES:\n"
+        "1. EXTRACT ALL: Extract every single word, including page numbers, headers, footers, and floating text. Do NOT summarize or omit any content.\n"
+        "2. MAINTAIN LAYOUT: Keep paragraphs, question markers (e.g., 'Question 14'), and answers on their own lines as seen.\n"
+        "3. TABLES: Extract tabular data into clean Markdown tables (| and -).\n"
+        "4. DO NOT CLEAN: Do not attempt to strip 'noise', watermarks, or recurring headers. Extract them as seen. I will handle cleaning separate.\n"
+        "5. CONTENT INTEGRITY: Do not add conversational text or formatting artifacts like triple backticks (```) for regular text."
     )
 
     try:
@@ -356,7 +372,7 @@ def extract_page_content_vision(image: Image.Image) -> str:
                     ],
                 }
             ],
-            max_tokens=2000,
+            max_tokens=4000, # Increased for dense audit pages
         )
         return response.choices[0].message.content or ""
     except Exception as e:
@@ -477,13 +493,35 @@ _NOISE_PATTERNS = [
     re.compile(r'\bFO\b'), # Specific "FO" noise from "FOCAS"
     re.compile(r'\bCAS\b'),
     re.compile(r'Standards?\s+on\s+Auditing', re.IGNORECASE),
+    re.compile(r'Risk\s+Assessment\s+and\s+Internal\s+Control', re.IGNORECASE),
+    re.compile(r'Digital\s+Auditing\s+and\s+Assurance', re.IGNORECASE),
+    re.compile(r'Group\s+Audits', re.IGNORECASE),
+    re.compile(r'Special\s+Features\s+of\s+Audit\s+of\s+Banks\s+&\s+NBFCs', re.IGNORECASE),
+    re.compile(r'Overview\s+of\s+Audit\s+of\s+Public\s+Sector\s+Undertakings', re.IGNORECASE),
+    re.compile(r'BY\s+CA\s+ATUL\s+AGARWAL', re.IGNORECASE),
+    re.compile(r'AIR1CA\s+Career\s+Institute', re.IGNORECASE),
+    re.compile(r'A1R1?CA\s+Career\s+Institute', re.IGNORECASE), # Variant seen in OCR
+    re.compile(r'\(AIR-?1\)', re.IGNORECASE),
+    re.compile(r'\(ACI\)', re.IGNORECASE),
+    re.compile(r'AUDIT\s+OF\s+CONSOLIDATED\s+FINANCIAL\s+STATEMENTS', re.IGNORECASE),
     re.compile(r'BY\s+CA\s+ATUL\s+AGARWAL\s+\(AIR-1\)', re.IGNORECASE),
-    re.compile(r'AIR1CA\s+Career\s+Institute\s+\(ACI\)', re.IGNORECASE),
+    re.compile(r'\bA[I1\sRC]{1,6}A?\s*Career\s*Institute\s*\(ACI\)', re.IGNORECASE),
+    re.compile(r'\bAIR1?CA\s*Career\s*Institute\s*\(ACI\)', re.IGNORECASE),
     re.compile(r'Page\s+\d+\.\d+', re.IGNORECASE),
     re.compile(r'LAST\s+ATTEMPT\s+KIT[:\s]*FM', re.IGNORECASE),
     re.compile(r'COST\s+OF\s+CAPITAL', re.IGNORECASE), # File specific banner
     re.compile(r'^SCOPE\s+&\s+OBJECTIVE.*', re.IGNORECASE),
     re.compile(r'^FM\s+SCOPE\s+&.*', re.IGNORECASE),
+    re.compile(r"I'm\s+unable\s+to\s+assist\s+with\s+this\s+request", re.IGNORECASE),
+    re.compile(r"I'm\s+unable\s+to\s+provide\s+a\s+verbatim\s+extraction", re.IGNORECASE),
+    re.compile(r"These\s+tools\s+are\s+designed\s+to\s+recognize\s+and\s+digitize", re.IGNORECASE),
+    re.compile(r"I\s*cannot\s*fulfill\s*this\s*request", re.IGNORECASE),
+    re.compile(r"I\s+cannot\s+assist\s+with\s+this\s+request", re.IGNORECASE),
+    re.compile(r"I\s+can't\s+assist\s+with\s+this\s+request", re.IGNORECASE),
+    re.compile(r"as\s+an\s+AI\s+language\s+model", re.IGNORECASE),
+    re.compile(r"Sure,\s+here\s+is\s+the\s+extracted\s+text", re.IGNORECASE),
+    re.compile(r"Here\s+is\s+the\s+extracted\s+text", re.IGNORECASE),
+    re.compile(r"Extracted\s+text\s+from\s+the\s+image", re.IGNORECASE),
 ]
 
 def clean_text(text: str) -> str:
@@ -511,7 +549,11 @@ def clean_text(text: str) -> str:
             continue
         cleaned.append(s)
     
-    return re.sub(r'\n{3,}', '\n\n', '\n'.join(cleaned)).strip()
+    text = re.sub(r'\n{3,}', '\n\n', '\n'.join(cleaned)).strip()
+    # Final cleanup of stray backticks and markdown code block artifacts
+    text = re.sub(r'```(?:markdown)?\n?', '', text)
+    text = re.sub(r'```$', '', text)
+    return text.strip()
 
 
 def extract_pdf(pdf_path: str, force_vision: bool = False) -> str:
@@ -540,12 +582,15 @@ def extract_pdf(pdf_path: str, force_vision: bool = False) -> str:
             return ""
         
         try:
-            images = convert_from_path(pdf_path, dpi=200) # 200dpi is good enough for text
+            images = convert_from_path(pdf_path, dpi=300) # 300dpi for better table OCR
             log.info(f"  📸  Converted {len(images)} pages to images. Processing with {VISION_MODEL}...")
+            last_extracted = ""
             for i, img in enumerate(images, 1):
+                log.info(f"    🚀  Processing page {i}/{len(images)} with Vision...")
                 try:
-                    content = extract_page_content_vision(img)
+                    content = extract_page_content_vision(img, prev_context=last_extracted)
                     parts.append(content)
+                    last_extracted = content
                 except Exception as e:
                     log.error(f"  Vision Error on page {i}: {e}")
             return clean_text('\n'.join(parts))
@@ -601,21 +646,16 @@ def split_q_and_a(body: str) -> tuple[str, str]:
         r'^\s*\|?\s*Working\s+Notes?\b',
     ]
     for pat in patterns:
-        # We search from the beginning. Everything before the first marker is Question.
         m = re.search(pat, body, re.IGNORECASE | re.MULTILINE)
         if m:
             q_part = body[:m.start()].strip()
             a_part = body[m.start():].strip()
             
-            # If the question part ends with common answer headers, it might be a leak
-            # e.g. "Factors while establishing..."
-            # We look for lines at the end of q_part that end in a colon but are not part of a list
+            # Clean up potential answer title leak into question
             q_lines = q_part.splitlines()
             if q_lines:
                 last_line = q_lines[-1].strip()
                 if last_line.endswith(':') and len(last_line) < 150:
-                    # Potential answer title leaked into question
-                    log.info(f"    🧹 Possible answer title leak detected: '{last_line}'")
                     q_part = '\n'.join(q_lines[:-1]).strip()
                     a_part = last_line + '\n' + a_part
             
@@ -624,47 +664,35 @@ def split_q_and_a(body: str) -> tuple[str, str]:
 
 
 def chunk_by_question(text: str) -> list[dict]:
-    """Split full PDF text into per-question chunks using a robust sandwich approach."""
-    # Unit detection: find all "UNIT X: Title" occurrences
+    """Split full PDF text into per-question chunks using a robust position-based approach."""
+    # 1. Identify all "UNIT" headers to establish context boundaries
     unit_map = []
-    unit_pattern = re.compile(r'^\s*UNIT\s*(\d+)[:\s-]+([^\n]+)', re.IGNORECASE | re.MULTILINE)
+    unit_pattern = re.compile(r'^\s*UNIT\s*(\d+|[IVX]+)\b\s*[:\s-]+([^\n]+)', re.IGNORECASE | re.MULTILINE)
     for m in unit_pattern.finditer(text):
+        u_val = m.group(1).upper()
         unit_map.append({
             "start": m.start(),
-            "no":    m.group(1),
+            "no":    u_val,
             "name":  m.group(2).strip()
         })
     unit_map.sort(key=lambda x: x["start"])
 
-    header_regex = r'((?:QUESTION|Question|Q\.?)\s*(?:NO\.?|No\.?)?\s*\d+)'
-    pattern = re.compile(header_regex, re.IGNORECASE)
+    # 2. Identify all "Question" headers with precise positions
+    q_pattern = re.compile(r'(?:\n|^)\s*(?:\*\*|#+)?\s*(?:Question|Q\.?|Q\s*No\.?)\s*(\d+)\b(?:\*\*)?[:\s]*', re.IGNORECASE)
     
-    # We want to find the positions of each header to determine its unit
-    header_positions = []
-    for m in pattern.finditer(text):
-        header_positions.append(m.start())
-
-    splits = pattern.split(text)
-    # With re.split and ONE capturing group, splits will be:
-    # [pre_text, header1, body_text1, header2, body_text2, ...]
+    matches = list(q_pattern.finditer(text))
+    chunks_map = {}
     
-    chunks = []
-    # Loop starts at 1, step 2 (header, body)
-    for i in range(1, len(splits), 2):
-        header = splits[i].strip()
-        body   = splits[i+1].strip() if i+1 < len(splits) else ""
+    for i, m in enumerate(matches):
+        q_num = str(int(m.group(1)))
+        h_pos = m.start()
         
-        if not body and not header:
-            continue
-            
-        # Extract question number from the header string
-        num_match = re.search(r'\d+', header)
-        q_num = num_match.group() if num_match else str(i // 2 + 1)
+        next_pos = matches[i+1].start() if i+1 < len(matches) else len(text)
+        raw_body = text[m.end():next_pos].strip()
         
-        # Determine the unit for this question
-        # Header text starts at its position in the split. 
-        # But we already have header_positions.
-        h_pos = header_positions[i // 2] if (i // 2) < len(header_positions) else 0
+        q_body, a_body = split_q_and_a(raw_body)
+        
+        # 3. Assign Unit based on current position
         current_unit = "1"
         current_unit_name = ""
         for u in unit_map:
@@ -674,56 +702,34 @@ def chunk_by_question(text: str) -> list[dict]:
             else:
                 break
 
-        q_text, a_text = split_q_and_a(body)
-        
-        # --- ROBUST TITLE PULLING (Disabled as it moves answer headers into questions) ---
-        # q_lines_count = len([l for l in q_text.splitlines() if l.strip()])
-        # if q_lines_count < 2:
-        #     a_lines = a_text.splitlines()
-        #     if len(a_lines) > 2:
-        #         start_search = 0
-        #         first_line = a_lines[0].strip()
-        #         if re.match(r'^\s*\|?\s*(?:Answer|Solution|Soln?|Suggested\s+Answer)[:\s|]*$', first_line, re.IGNORECASE):
-        #             start_search = 1
-        #         
-        #         if start_search < len(a_lines):
-        #             potential_title = a_lines[start_search].strip()
-        #             if 0 < len(potential_title) < 150:
-        #                 q_text = (q_text + "\n" + potential_title).strip()
-        #                 a_text = "\n".join(a_lines[:start_search] + a_lines[start_search+1:]).strip()
-        # ----------------------------
+        full_q_text = (f"Question {q_num}\n" + q_body).strip()
+        full_content = (f"Question {q_num}\n" + raw_body).strip()
+        group_key = f"{current_unit}_{q_num}"
 
-        full_q = (header + "\n" + q_text).strip()
-        
-        # --- MERGE LOGIC ---
-        # If this chunk has the same question_no as the previous one, merge them.
-        # This handles duplicated headers (e.g. one in table box, one in plain text)
-        if chunks and chunks[-1]["question_no"] == q_num:
-            log.info(f"    🔗  Merging duplicate header chunk for Q{q_num}")
-            # Combine the content
-            chunks[-1]["content"]       += "\n\n" + (header + "\n" + body).strip()
-            # If the current chunk found an answer but the previous didn't, use it.
-            if not chunks[-1]["answer_text"] and a_text:
-                chunks[-1]["question_text"] += "\n\n" + full_q
-                chunks[-1]["answer_text"]   = a_text
-            else:
-                chunks[-1]["question_text"] += "\n\n" + (header + "\n" + body).strip()
-            continue
-
-        chunks.append({
-            "question_no":   q_num,
-            "unit":          current_unit,
-            "unit_name":     current_unit_name,
-            "question_text": full_q,
-            "answer_text":   a_text,
-            "content":       (header + "\n" + body).strip(),
-            "chunk_idx":     len(chunks), # This will be the index in the chunks list
-        })
-    return chunks
+        if group_key in chunks_map:
+            existing = chunks_map[group_key]
+            log.info(f"    🔗  Merging multiple fragments for Q{q_num} in Unit {current_unit}")
+            if len(full_q_text) > len(existing["question_text"]):
+                existing["question_text"] = full_q_text
+            if len(a_body) > len(existing["answer_text"]):
+                existing["answer_text"] = a_body
+            existing["content"] += "\n\n" + full_content
+        else:
+            chunks_map[group_key] = {
+                "question_no":   q_num,
+                "unit":          current_unit,
+                "unit_name":     current_unit_name,
+                "question_text": full_q_text,
+                "answer_text":   a_body,
+                "content":       full_content,
+                "chunk_idx":     len(chunks_map),
+            }
+    
+    return sorted(chunks_map.values(), key=lambda x: x["chunk_idx"])
 
 # ── Embedding + MongoDB upsert ─────────────────────────────────────────────────
 
-openai_client = OpenAI(api_key=OPENAI_KEY)
+openai_client = OpenAI(api_key=OPENAI_KEY, timeout=60.0)
 mongo_client  = MongoClient(MONGODB_URI)
 col           = mongo_client[DB_NAME][COLLECTION]
 
@@ -779,10 +785,9 @@ def ingest_pdf(pdf_path: str, level: str, subject: str, rel_path: str, verbose: 
 
     ops = []
     for chunk, emb in zip(valid_chunks, embeddings):
-        # We include level and subject in the ID to avoid collisions across different paths.
-        # We also include chunk_idx to handle cases where the same Question Number appears twice in one PDF.
+        # We include level, subject, unit and question in the ID to avoid collisions.
         safe_fn = re.sub(r'[^a-zA-Z0-9]', '_', filename).lower()
-        doc_id = f"{level}_{subject}_ch{chapter}_q{chunk['question_no']}_{chunk['chunk_idx']}_{safe_fn}"
+        doc_id = f"{level}_{subject}_ch{chapter}_u{chunk['unit']}_q{chunk['question_no']}_{safe_fn}"
         
         ops.append(UpdateOne(
             {"_id": doc_id},
@@ -794,21 +799,20 @@ def ingest_pdf(pdf_path: str, level: str, subject: str, rel_path: str, verbose: 
                 "unit":           chunk['unit'],
                 "unit_name":      chunk['unit_name'],
                 "question_no":    chunk['question_no'],
-                "chunk_idx":      chunk['chunk_idx'],
                 "source_file":    filename,
                 "question_text":  chunk['question_text'],
                 "answer_text":    chunk['answer_text'],
                 "content":        chunk['content'],
                 "embedding":      emb,
                 "ingested_at":    datetime.now(timezone.utc),
-                "schema_version": 6, # Incremented for Unit support
+                "schema_version": 6, 
             }},
             upsert=True,
         ))
 
     result = col.bulk_write(ops)
     log.info(f"  ✅  Upserted {len(valid_chunks)} chunk(s)")
-    save_ingested_file(rel_path)
+    save_ingested_file(rel_path, subject)
 
 
 def ensure_indexes():
@@ -864,12 +868,18 @@ def main():
 
     ensure_indexes()
     
-    ingested_files = get_ingested_files()
-    
+    # Cache for per-subject ingested lists to avoid multiple file reads
+    ingested_by_subject = {}
+
+    def is_ingested(path, sub):
+        if sub not in ingested_by_subject:
+            ingested_by_subject[sub] = get_ingested_files(sub)
+        return path in ingested_by_subject[sub]
+
     to_process = []
     for pdf_path, level, subject, rel_path in sorted(pdf_tasks):
-        if rel_path in ingested_files:
-            log.info(f"⏭️  Skipping {rel_path} (already ingested)")
+        if is_ingested(rel_path, subject):
+            log.info(f"⏭️  Skipping {rel_path} (already ingested in {subject}.json)")
         else:
             to_process.append((pdf_path, level, subject, rel_path))
 

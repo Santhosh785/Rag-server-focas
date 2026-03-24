@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import argparse
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -27,7 +29,11 @@ def get_sort_key(doc):
         except ValueError:
             # Handle cases like "1A", "Q1" by extracting the digits
             m = re.search(r'\d+', str(s))
-            return int(m.group()) if m else 0
+            if m:
+                return int(m.group())
+            # Handle Roman Numerals or other strings by returning a large number or 0
+            # For now, 0 or simple string length for sorting
+            return 0
 
     return (
         doc.get("level", ""),
@@ -114,9 +120,6 @@ def main():
 
     print(f"✅  Done! Check '{output_file}'.")
     mongo_client.close()
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
