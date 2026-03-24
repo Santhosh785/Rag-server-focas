@@ -307,7 +307,8 @@ function App() {
                                 <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#fff' }}>Questions</h3>
                             </div>
 
-                            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', padding: '0 10px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '50px 1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', padding: '0 10px' }}>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>S.No</div>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Chapter</div>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Unit (Optional)</div>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Q Num</div>
@@ -317,13 +318,16 @@ function App() {
 
                             <AnimatePresence>
                                 {questions.map((q, idx) => (
-                                    <motion.div 
-                                        key={idx} 
-                                        initial={{ opacity: 0, height: 0 }} 
-                                        animate={{ opacity: 1, height: 'auto' }} 
+                                    <motion.div
+                                        key={idx}
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
                                         exit={{ opacity: 0, height: 0 }}
-                                        style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}
+                                        style={{ display: 'grid', gridTemplateColumns: '50px 1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}
                                     >
+                                        <div style={{ fontSize: '1rem', color: '#93c5fd', fontWeight: 600, textAlign: 'center' }}>
+                                            {idx + 1}
+                                        </div>
                                         <select
                                             className="builder-input"
                                             value={q.chapter_number}

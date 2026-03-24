@@ -15,7 +15,8 @@ from backend.utils.docx_utils import (
 )
 from backend.utils.text_utils import (
     clean_val,
-    clean_question_text
+    clean_question_text,
+    arabic_to_roman
 )
 
 logger = logging.getLogger(__name__)
@@ -148,13 +149,35 @@ def build_paper_bundle_from_df(df: pd.DataFrame, col) -> io.BytesIO:
 
         if not q_num: continue
 
-        query = {
+        # Base query
+        base_query = {
             "level": {"$regex": f"^{re.escape(level)}$", "$options": "i"},
             "subject": {"$regex": f"^{re.escape(subject)}$", "$options": "i"},
             "chapter": {"$regex": f"^{re.escape(chapter)}$", "$options": "i"},
             "question_no": {"$regex": f"^{re.escape(q_num)}$", "$options": "i"}
         }
-        if unit: query["unit"] = {"$regex": f"^{re.escape(unit)}$", "$options": "i"}
+
+        if unit:
+            # Try to convert Arabic to Roman (e.g., "2" -> "II")
+            unit_roman = arabic_to_roman(unit)
+            # Search for both Arabic and Roman versions using $or
+            if unit_roman and unit_roman != unit:
+                query = {
+                    "$and": [
+                        base_query,
+                        {
+                            "$or": [
+                                {"unit": {"$regex": f"^{re.escape(unit)}$", "$options": "i"}},
+                                {"unit": {"$regex": f"^{re.escape(unit_roman)}$", "$options": "i"}}
+                            ]
+                        }
+                    ]
+                }
+            else:
+                query = base_query
+                query["unit"] = {"$regex": f"^{re.escape(unit)}$", "$options": "i"}
+        else:
+            query = base_query
             
         question_data = col.find_one(query)
         if question_data:
