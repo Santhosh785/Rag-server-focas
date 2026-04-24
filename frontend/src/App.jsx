@@ -15,7 +15,7 @@ function App() {
     const [availableChapters, setAvailableChapters] = useState([]);
     const [loadingChapters, setLoadingChapters] = useState(false);
     const [questions, setQuestions] = useState([
-        { chapter_number: '', unit: '', question_number: '', marks: ''}
+        { part: 'A', q_type: 'subjective', chapter_number: '', unit: '', question_number: '', marks: ''}
     ]);
 
     // Random Mode State
@@ -66,6 +66,8 @@ function App() {
     const addQuestion = () => {
         const lastQ = questions[questions.length - 1];
         setQuestions([...questions, { 
+            part: lastQ ? lastQ.part : 'A',
+            q_type: lastQ ? lastQ.q_type : 'subjective',
             chapter_number: lastQ ? lastQ.chapter_number : '', 
             unit: lastQ ? lastQ.unit : '', 
             question_number: '', 
@@ -145,6 +147,8 @@ function App() {
                 const payload = questions.map(q => ({
                     level: globalLevel,
                     subject: globalSubject,
+                    part: String(q.part || "A"),
+                    q_type: String(q.q_type || "subjective"),
                     chapter_number: String(q.chapter_number),
                     unit: String(q.unit || ""),
                     question_number: String(q.question_number),
@@ -307,10 +311,12 @@ function App() {
                                 <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#fff' }}>Questions</h3>
                             </div>
 
-                            <div style={{ display: 'grid', gridTemplateColumns: '50px 1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', padding: '0 10px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '50px 80px 100px 1.5fr 1.5fr 1fr 1fr 40px', gap: '10px', padding: '0 10px' }}>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>S.No</div>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Part</div>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Type</div>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Chapter</div>
-                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Unit (Optional)</div>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Unit</div>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Q Num</div>
                                 <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Marks</div>
                                 <div></div>
@@ -323,11 +329,30 @@ function App() {
                                         initial={{ opacity: 0, height: 0 }}
                                         animate={{ opacity: 1, height: 'auto' }}
                                         exit={{ opacity: 0, height: 0 }}
-                                        style={{ display: 'grid', gridTemplateColumns: '50px 1.5fr 1.5fr 1fr 1fr 40px', gap: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}
+                                        style={{ display: 'grid', gridTemplateColumns: '50px 80px 100px 1.5fr 1.5fr 1fr 1fr 40px', gap: '10px', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}
                                     >
                                         <div style={{ fontSize: '1rem', color: '#93c5fd', fontWeight: 600, textAlign: 'center' }}>
                                             {idx + 1}
                                         </div>
+                                        <select
+                                            className="builder-input"
+                                            value={q.part}
+                                            onChange={(e) => updateQuestion(idx, 'part', e.target.value)}
+                                            style={{ padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid transparent', transition: 'all 0.2s', width: '100%'}}
+                                        >
+                                            <option value="A">Part A</option>
+                                            <option value="B">Part B</option>
+                                        </select>
+                                        <select
+                                            className="builder-input"
+                                            value={q.q_type}
+                                            onChange={(e) => updateQuestion(idx, 'q_type', e.target.value)}
+                                            style={{ padding: '12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', color: 'white', border: '1px solid transparent', transition: 'all 0.2s', width: '100%'}}
+                                        >
+                                            <option value="subjective">DB</option>
+                                            <option value="mcq_general">MCQ General</option>
+                                            <option value="mcq_scenario">MCQ Scenario</option>
+                                        </select>
                                         <select
                                             className="builder-input"
                                             value={q.chapter_number}

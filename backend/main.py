@@ -48,10 +48,12 @@ col = db[COLLECTION]
 class QuestionItem(BaseModel):
     level: str
     subject: str
+    part: Optional[str] = "A"
     chapter_number: str
     unit: Optional[str] = ""
     question_number: str
     marks: Optional[str] = ""
+    q_type: Optional[str] = "subjective"
 
 class PaperRequest(BaseModel):
     questions: List[QuestionItem]
